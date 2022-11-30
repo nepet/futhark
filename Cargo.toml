@@ -1,0 +1,26 @@
+[package]
+name = "futhark"
+version = "0.1.0"
+edition = "2021"
+authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
+
+[dependencies]
+anyhow = "1.0.66"
+base64 = "0.20.0"
+crypto = "0.4.0"
+# csv = "1.1.6"
+env_logger = "0.10.0"
+hex = "0.4.3"
+sha2 = { version = "0.10.6", features = ["compress"] }
+thiserror = "1.0.37"
+
+[dev-dependencies]
+criterion = "0.4"
+
+[[bench]]
+name = "decoding_benchmark"
+harness = false
+
+[[bench]]
+name = "padding_benchmark"
+harness = false
