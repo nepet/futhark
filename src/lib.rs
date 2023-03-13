@@ -95,6 +95,109 @@ impl std::fmt::Display for Condition {
     }
 }
 
+fn why(cond: bool, field: &str, xpl: String) -> Option<String> {
+    if cond {
+        return None;
+    }
+    Some(format!("{}: {}", field, xpl))
+}
+
+/// A trait that defines how an alternative is tested.
+pub trait Tester {
+    /// Returns `None` if the test is met and a reason `String` if the
+    /// test conditions are not met.
+    ///
+    /// # Arguments
+    ///
+    /// * `alt` - The alternative to check against the `Tester`.
+    fn test(&self, alt: &Alternative) -> Option<String>;
+}
+
+/// A `Tester` trait implementation that checks for matching conditions. The
+/// `ConditionTester` compares the String `value` against the condition of the
+/// `Alternative`.
+struct ConditionTester {
+    value: String,
+}
+
+impl Tester for ConditionTester {
+    fn test(&self, alt: &Alternative) -> Option<String> {
+        match alt.cond {
+            Condition::Missing => why(false, &alt.field, "is present".to_string()),
+            Condition::Equal => why(
+                self.value == alt.value,
+                &alt.field,
+                format!("!= {}", alt.value),
+            ),
+            Condition::NotEqual => why(
+                self.value != alt.value,
+                &alt.field,
+                format!("= {}", alt.value),
+            ),
+            Condition::BeginsWith => why(
+                self.value.starts_with(&alt.value),
+                &alt.field,
+                format!("does not start with {}", alt.value),
+            ),
+            Condition::EndsWith => why(
+                self.value.ends_with(&alt.value),
+                &alt.field,
+                format!("does not end with {}", alt.value),
+            ),
+            Condition::Contains => why(
+                self.value.contains(&alt.value),
+                &alt.field,
+                format!("does not contain {}", alt.value),
+            ),
+            Condition::IntLT => {
+                let actual_int = match self.value.parse::<i64>() {
+                    Ok(n) => n,
+                    Err(_) => return why(false, &alt.field, "not an integer field".to_string()),
+                };
+
+                let restriction_int = match alt.value.parse::<i64>() {
+                    Ok(n) => n,
+                    Err(_) => return why(false, &alt.field, "not a valid integer".to_string()),
+                };
+
+                return why(
+                    actual_int < restriction_int,
+                    &alt.field,
+                    format!(">= {}", restriction_int),
+                );
+            }
+            Condition::IntGT => {
+                let actual_int = match self.value.parse::<i64>() {
+                    Ok(n) => n,
+                    Err(_) => return why(false, &alt.field, "not an integer field".to_string()),
+                };
+
+                let restriction_int = match alt.value.parse::<i64>() {
+                    Ok(n) => n,
+                    Err(_) => return why(false, &alt.field, "not a valid integer".to_string()),
+                };
+
+                return why(
+                    actual_int > restriction_int,
+                    &alt.field,
+                    format!("<= {}", restriction_int),
+                );
+            }
+            Condition::LexLT => why(
+                self.value.cmp(&alt.value).is_lt(),
+                &alt.field,
+                format!("is the same or ordered after {}", alt.value),
+            ),
+            Condition::LexGT => why(
+                self.value.cmp(&alt.value).is_gt(),
+                &alt.field,
+                format!("is the same or ordered before {}", alt.value),
+            ),
+            Condition::Comment => None,
+        }
+    }
+}
+
 /// An [`Alternative`] is the smallest component of a rune. It consists of a single
 /// combination of a field name, a condition and a value that can be checked.
 ///
@@ -205,67 +308,8 @@ impl Alternative {
         }
 
         let value = values.get(&self.field).unwrap().clone();
-        match self.cond {
-            Condition::Missing => {
-                self.why(!values.contains_key(&self.field), "is present".to_string())
-            }
-            Condition::Equal => self.why(value == self.value, format!("!= {}", self.value)),
-            Condition::NotEqual => self.why(value != self.value, format!("= {}", self.value)),
-            Condition::BeginsWith => self.why(
-                value.starts_with(&self.value),
-                format!("does not start with {}", self.value),
-            ),
-            Condition::EndsWith => self.why(
-                value.ends_with(&self.value),
-                format!("does not end with {}", self.value),
-            ),
-            Condition::Contains => self.why(
-                value.contains(&self.value),
-                format!("does not contain {}", self.value),
-            ),
-            Condition::IntLT => {
-                let actual_int = match value.parse::<i64>() {
-                    Ok(n) => n,
-                    Err(_) => return self.why(false, "not an integer field".to_string()),
-                };
-
-                let restriction_int = match self.value.parse::<i64>() {
-                    Ok(n) => n,
-                    Err(_) => return self.why(false, "not a valid integer".to_string()),
-                };
-
-                return self.why(
-                    actual_int < restriction_int,
-                    format!(">= {}", restriction_int),
-                );
-            }
-            Condition::IntGT => {
-                let actual_int = match value.parse::<i64>() {
-                    Ok(n) => n,
-                    Err(_) => return self.why(false, "not an integer field".to_string()),
-                };
-
-                let restriction_int = match self.value.parse::<i64>() {
-                    Ok(n) => n,
-                    Err(_) => return self.why(false, "not a valid integer".to_string()),
-                };
-
-                return self.why(
-                    actual_int > restriction_int,
-                    format!("<= {}", restriction_int),
-                );
-            }
-            Condition::LexLT => self.why(
-                value.cmp(&self.value).is_lt(),
-                format!("is the same or ordered after {}", self.value),
-            ),
-            Condition::LexGT => self.why(
-                value.cmp(&self.value).is_gt(),
-                format!("is the same or ordered before {}", self.value),
-            ),
-            // We already checked this on top of the test.
-            Condition::Comment => None,
-        }
+        let tester = ConditionTester { value };
+        tester.test(self)
     }
 
     /// Returns an encoded String of the alternative. A string will be encoded
