@@ -274,9 +274,8 @@ impl Alternative {
     ///
     /// # Arguments
     ///
-    /// * `values` A map of type `<String, String>` that represent the field names and the
-    /// values
-    pub fn test(&self, values: &HashMap<String, String>) -> Option<String> {
+    /// * `values` A map of type `<String, Tester>` that represent the field names and the tests that have to be performed on the field.
+    pub fn test(&self, values: &HashMap<String, Box<dyn Tester>>) -> Option<String> {
         // Wrapper to return an explanation if the condition is not met.
 
         // Check if condition is a comment, this is always true. We can skip any
@@ -305,8 +304,7 @@ impl Alternative {
             );
         }
 
-        let value = values.get(&self.field).unwrap().clone();
-        let tester = ConditionTester { value };
+        let tester = values.get(&self.field).unwrap();
         tester.test(self)
     }
 
@@ -438,7 +436,7 @@ impl Restriction {
 
     /// Test a set of values against a restriction. Returns `None` on success
     /// and a `String` with all explanations otherwise.
-    pub fn test(&self, values: &HashMap<String, String>) -> Option<String> {
+    pub fn test(&self, values: &HashMap<String, Box<dyn Tester>>) -> Option<String> {
         // Iterate and test over all alternatives and collect explanations.
         let mut explanations = vec![];
         for alt in &self.alternatives {
@@ -629,7 +627,10 @@ impl Rune {
     }
 
     /// Returns None if met, Reason otherwise.
-    pub fn are_restrictions_met(&self, values: &HashMap<String, String>) -> Option<String> {
+    pub fn are_restrictions_met(
+        &self,
+        values: &HashMap<String, Box<dyn Tester>>,
+    ) -> Option<String> {
         for r in &self.restrictions {
             if let Some(reason) = r.test(values) {
                 return Some(reason);
@@ -652,7 +653,7 @@ impl Rune {
     pub fn check_with_reason(
         &self,
         b64str: &str,
-        values: &HashMap<String, String>,
+        values: &HashMap<String, Box<dyn Tester>>,
     ) -> Result<Option<String>, RuneError> {
         let rune = Rune::from_base64(b64str)?;
         if !self.is_authorized(rune) {
@@ -952,42 +953,41 @@ mod tests {
 
     #[test]
     fn test_alternatives() -> Result<(), RuneError> {
+        // test_alt_condition takes away some of the overhead to make the test
+        // readable.
+        fn test_alt_condition(alt: &Alternative, field: String, value: String) -> Option<String> {
+            let mut t: HashMap<String, Box<dyn Tester>> = HashMap::new();
+            t.insert(field, Box::new(ConditionTester { value }));
+            alt.test(&t)
+        }
+
         // Condition: `!`
         let alt = Alternative::new("f1".to_string(), Condition::Missing, "".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is present");
-
-        let mut f2 = HashMap::new();
-        f2.insert("f2".to_string(), "1".to_string());
-        assert!(alt.test(&f2).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: is present"
+        );
+        assert!(test_alt_condition(&alt, "f2".to_string(), "1".to_string()).is_none());
 
         // Condition: `=`
         let alt = Alternative::new("f1".to_string(), Condition::Equal, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-        assert!(alt
-            .test(&HashMap::from([("f1".to_string(), "1".to_string())]))
-            .is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_none());
         assert_eq!(
-            alt.test(&HashMap::from([("f1".to_string(), "01".to_string())]))
-                .unwrap(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap(),
             *"f1: != 1"
         );
         assert_eq!(
-            alt.test(&HashMap::from([("f1".to_string(), "10".to_string())]))
-                .unwrap(),
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap(),
             *"f1: != 1"
         );
         assert_eq!(
-            alt.test(&HashMap::from([("f1".to_string(), "010".to_string())]))
-                .unwrap(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap(),
             *"f1: != 1"
         );
         assert_eq!(
-            alt.test(&HashMap::from([("f1".to_string(), "10101".to_string())]))
-                .unwrap(),
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap(),
             *"f1: != 1"
         );
 
@@ -999,26 +999,14 @@ mod tests {
             false,
         )?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: = 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: = 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
 
         // Condition: `^`
         let alt = Alternative::new(
@@ -1028,26 +1016,17 @@ mod tests {
             false,
         )?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: does not start with 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: does not start with 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap(),
+            *"f1: does not start with 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap(),
+            *"f1: does not start with 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
 
         // Condition: `$`
         let alt = Alternative::new(
@@ -1057,26 +1036,17 @@ mod tests {
             false,
         )?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: does not end with 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: does not end with 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap(),
+            *"f1: does not end with 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap(),
+            *"f1: does not end with 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
 
         // Condition: `~`
         let alt = Alternative::new(
@@ -1086,174 +1056,129 @@ mod tests {
             false,
         )?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "020".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: does not contain 1");
+        assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "020".to_string()).unwrap(),
+            *"f1: does not contain 1"
+        );
 
         // Condition: `<`
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: >= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap(),
+            *"f1: >= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap(),
+            *"f1: >= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap(),
+            *"f1: >= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap(),
+            *"f1: >= 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "0".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "x".to_string()).unwrap(),
+            *"f1: not an integer field"
+        );
 
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: >= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: >= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: >= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: >= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: >= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "0".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "x".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: not an integer field");
-
-        // Condition: `<`
+        // Condition: `<`: check the non-integer alternative.
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "x".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: not a valid integer");
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: not a valid integer"
+        );
 
         // Condition: `>`
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: <= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap(),
+            *"f1: <= 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "0".to_string()).unwrap(),
+            *"f1: <= 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "x".to_string()).unwrap(),
+            *"f1: not an integer field"
+        );
 
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: <= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: <= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "0".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: <= 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "x".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: not an integer field");
-
-        // Condition: `>`
+        // Condition: `>`: check the non-integer alternative.
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "x".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: not a valid integer");
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: not a valid integer"
+        );
 
         // Condition: `{`
         let alt = Alternative::new("f1".to_string(), Condition::LexLT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered after 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered after 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered after 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "0".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "020".to_string());
-        assert!(alt.test(&f1).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: is the same or ordered after 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap(),
+            *"f1: is the same or ordered after 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap(),
+            *"f1: is the same or ordered after 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "0".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "020".to_string()).is_none());
 
         // Condition: `}`
         let alt = Alternative::new("f1".to_string(), Condition::LexGT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap() == *"f1: is missing");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered before 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered before 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered before 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "0".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered before 1");
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "020".to_string());
-        assert!(alt.test(&f1).unwrap() == *"f1: is the same or ordered before 1");
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap(),
+            *"f1: is the same or ordered before 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap(),
+            *"f1: is the same or ordered before 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap(),
+            *"f1: is the same or ordered before 1"
+        );
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "0".to_string()).unwrap(),
+            *"f1: is the same or ordered before 1"
+        );
+        assert_eq!(
+            test_alt_condition(&alt, "f1".to_string(), "020".to_string()).unwrap(),
+            *"f1: is the same or ordered before 1"
+        );
 
         // Condition: `#`
         let alt = Alternative::new("f1".to_string(), Condition::Comment, "1".to_string(), false)?;
@@ -1262,34 +1187,11 @@ mod tests {
             "Expected None, got {}",
             alt.test(&HashMap::new()).unwrap(),
         );
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "1".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "01".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "010".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "10101".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "0".to_string());
-        assert!(alt.test(&f1).is_none());
-
-        let mut f1 = HashMap::new();
-        f1.insert("f1".to_string(), "020".to_string());
-        assert!(alt.test(&f1).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_none());
+        assert!(test_alt_condition(&alt, "f1".to_string(), "0".to_string()).is_none());
         Ok(())
     }
 
@@ -1380,12 +1282,12 @@ mod tests {
                     assert!(splits[0] == "PASS" || splits[0] == "FAIL");
                     let rune1 = last_rune1.clone().unwrap();
                     let rune2 = last_rune2.clone().unwrap();
-                    let mut values = HashMap::new();
+                    let mut values: HashMap<String, Box<dyn Tester>> = HashMap::new();
                     let rest = splits[1..].to_vec();
                     for var in rest {
                         let parts: Vec<&str> = var.split('=').collect();
                         assert_eq!(parts.len(), 2);
-                        values.insert(parts[0].to_string(), parts[1].to_string());
+                        values.insert(parts[0].to_string(), Box::new(ConditionTester{ value: parts[1].to_string() }));
                     }
                     if splits[0] == "PASS" {
                         assert!(rune1.are_restrictions_met(&values).is_none());
