@@ -1,6 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
 use anyhow::{self, Result};
+use base64::Engine;
 use thiserror::Error;
 
 mod sha256;
@@ -602,12 +603,12 @@ impl Rune {
     /// * `RuneError::Unknown` If the decoding fails.
     /// * `RuneError::ValueError` If the rune size is shorter that the expected authcode lenght.
     pub fn from_base64(s: &str) -> Result<Self, RuneError> {
-        let engine = base64::engine::fast_portable::FastPortable::from(
+        let engine = base64::engine::general_purpose::GeneralPurpose::new(
             &base64::alphabet::URL_SAFE,
-            base64::engine::fast_portable::PAD,
+            base64::engine::general_purpose::PAD,
         );
-        let rune_byte =
-            base64::decode_engine(s, &engine).map_err(|e| RuneError::Unknown(format!("{}", e)))?;
+        let rune_byte = 
+           engine.decode(s).map_err(|e| RuneError::Unknown(format!("{}", e)))?;
         if rune_byte.len() < 32 {
             return Err(RuneError::ValueError(
                 "expected decoded len to be contain 32byte authcode".to_string(),
@@ -671,11 +672,11 @@ impl Rune {
             .join("&");
         let mut data: Vec<u8> = self.compressor.state().into();
         data.append(&mut rest_str.as_bytes().to_vec());
-        let engine = base64::engine::fast_portable::FastPortable::from(
+        let engine = base64::engine::general_purpose::GeneralPurpose::new(
             &base64::alphabet::URL_SAFE,
-            base64::engine::fast_portable::PAD,
+            base64::engine::general_purpose::PAD,
         );
-        base64::encode_engine(data, &engine)
+        engine.encode(data)
     }
 }
 
