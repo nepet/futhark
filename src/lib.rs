@@ -268,13 +268,6 @@ impl Alternative {
         self.field.is_empty()
     }
 
-    fn why(&self, cond: bool, xpl: String) -> Option<String> {
-        if cond {
-            return None;
-        }
-        Some(format!("{}: {}", self.field, xpl))
-    }
-
     /// Test the alternative against a set of values. Returns `None` if the test
     /// succeeds and a `String` with an explanation why the test failed
     /// otherwise.
@@ -297,14 +290,19 @@ impl Alternative {
             // Default to ignoring id field as long as no version is set. A
             // version is separated by a `-`, e.g `-[version]`.
             if self.is_unique_id() {
-                return self.why(
+                return why(
                     !self.value.contains('-'),
+                    &self.field,
                     format!("unknown version {}", self.value),
                 );
             }
             // This can only be true if the condition for this test is
             // `Condition::Missing`.
-            return self.why(self.cond == Condition::Missing, "is missing".to_string());
+            return why(
+                self.cond == Condition::Missing,
+                &self.field,
+                "is missing".to_string(),
+            );
         }
 
         let value = values.get(&self.field).unwrap().clone();
