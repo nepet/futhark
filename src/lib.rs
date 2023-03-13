@@ -737,7 +737,7 @@ const BLOCK_SIZE: usize = 64;
 
 /// Calculate how much we have to increase x until it's divisible by 64.
 fn pad_len(x: usize) -> usize {
-    ((BLOCK_SIZE - (x % BLOCK_SIZE)) % BLOCK_SIZE) as usize
+    (BLOCK_SIZE - (x % BLOCK_SIZE)) % BLOCK_SIZE
 }
 
 /// Add padding to the vec.
