@@ -1287,7 +1287,12 @@ mod tests {
                     for var in rest {
                         let parts: Vec<&str> = var.split('=').collect();
                         assert_eq!(parts.len(), 2);
-                        values.insert(parts[0].to_string(), Box::new(ConditionTester{ value: parts[1].to_string() }));
+                        values.insert(
+                            parts[0].to_string(),
+                            Box::new(ConditionTester {
+                                value: parts[1].to_string(),
+                            }),
+                        );
                     }
                     if splits[0] == "PASS" {
                         assert!(rune1.are_restrictions_met(&values).is_none());
@@ -1299,7 +1304,5 @@ mod tests {
                 }
             }
         }
-
-        // assert!(false);
     }
 }
