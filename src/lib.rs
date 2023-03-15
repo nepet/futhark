@@ -265,6 +265,21 @@ impl Alternative {
         Ok(Alternative { field, cond, value })
     }
 
+    /// Returns the field name of the `Alternative`.
+    pub fn get_field(&self) -> String {
+        self.field.clone()
+    }
+
+    /// Returns the condition of the `Alternative`.
+    pub fn get_condition(&self) -> Condition {
+        self.cond.clone()
+    }
+
+    /// Returns the value of the `Alternative`.
+    pub fn get_value(&self) -> String {
+        self.value.clone()
+    }
+
     fn is_unique_id(&self) -> bool {
         self.field.is_empty()
     }
@@ -607,8 +622,9 @@ impl Rune {
             &base64::alphabet::URL_SAFE,
             base64::engine::general_purpose::PAD,
         );
-        let rune_byte = 
-           engine.decode(s).map_err(|e| RuneError::Unknown(format!("{}", e)))?;
+        let rune_byte = engine
+            .decode(s)
+            .map_err(|e| RuneError::Unknown(format!("{}", e)))?;
         if rune_byte.len() < 32 {
             return Err(RuneError::ValueError(
                 "expected decoded len to be contain 32byte authcode".to_string(),
