@@ -15,6 +15,7 @@ thiserror = "1.0.37"
 
 [dev-dependencies]
 criterion = "0.4"
+chrono = "0.4.24"
 
 [[bench]]
 name = "decoding_benchmark"
