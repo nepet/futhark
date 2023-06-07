@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Read, str::FromStr};
+use std::{collections::HashMap, str::FromStr};
 
 use anyhow::{self, Result};
 use base64::Engine;
@@ -544,7 +544,7 @@ impl std::cmp::PartialEq for Restriction {
             return false;
         };
 
-        return true;
+        true
     }
 }
 
