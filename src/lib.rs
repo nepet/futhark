@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, io::Read, str::FromStr};
 
 use anyhow::{self, Result};
 use base64::Engine;
@@ -16,8 +16,14 @@ pub enum RuneError {
     InvalidField(String),
     #[error("{0}")]
     ValueError(String),
+    #[error("{0} does not contain any operator")]
+    NoOperator(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("fewer restrictions than master")]
+    LessRestrictions,
+    #[error("does not match master rune")]
+    DoesNotMatch,
 }
 
 /// Conditions are the heart of a [`Rune`]. They are to be met and build
@@ -86,6 +92,25 @@ impl TryFrom<char> for Condition {
         };
 
         Ok(cond)
+    }
+}
+
+impl TryFrom<&str> for Condition {
+    type Error = RuneError;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        if value.len() > 1 {
+            return Err(RuneError::InvalidCondition(
+                "condition from multiple chars".to_string(),
+            ));
+        }
+
+        match value.chars().next() {
+            Some(c) => c.try_into(),
+            None => Err(RuneError::InvalidCondition(
+                "condition from empty &str".to_string(),
+            )),
+        }
     }
 }
 
@@ -327,7 +352,15 @@ impl Alternative {
     /// Returns an encoded String of the alternative. A string will be encoded
     /// in `[field][condition][value]`
     pub fn encode(&self) -> String {
-        format!("{}{}{}", self.field, self.cond, self.value)
+        format!(
+            "{}{}{}",
+            self.field,
+            self.cond,
+            self.value
+                .replace('\\', "\\\\")
+                .replace('|', "\\|")
+                .replace('&', "\\&")
+        )
     }
 
     /// Tries to read the first alternative from the buffer and to decode this
@@ -344,58 +377,43 @@ impl Alternative {
         let mut cond: Option<Condition> = None;
         let mut value = String::new();
 
-        let mut data_vec = data.as_bytes().to_vec();
-        data_vec.reverse();
-
-        while !data_vec.is_empty() {
-            let c = data_vec
-                .pop()
-                .ok_or_else(|| RuneError::Unknown("vec is empty".to_string()))?
-                as char;
-
-            if PUNCTUATION.contains(&c) {
-                cond = match c.try_into() {
-                    Ok(x) => Some(x),
-                    Err(e) => return Err(e),
-                };
+        let mut chars = data.chars();
+        // Extract field name and condition.
+        for c in chars.by_ref() {
+            if is_separator(c) {
+                cond = c.try_into().ok();
                 break;
             }
             field.push(c);
         }
 
         if cond.is_none() {
-            return Err(RuneError::Unknown(format!(
-                "{} does not contain operator",
-                field
-            )));
+            return Err(RuneError::NoOperator(field));
         }
 
-        while !data_vec.is_empty() {
-            let c = data_vec
-                .pop()
-                .ok_or_else(|| RuneError::Unknown("vec is empty".to_string()))?
-                as char;
-
+        // Extract value.
+        let mut extra_chars = 0;
+        while let Some(c) = chars.next() {
             match c {
-                // Beginning of new alternative. We don't need this for further
-                // indication so we strip it.
                 '|' => break,
-                // Beginning of new restriction. We want to keep this operator
-                // for further indication.
                 '&' => {
-                    data_vec.push(c as u8);
+                    extra_chars += 1;
                     break;
                 }
-                // Skip escape character.
-                '\\' => {}
+                '\\' => {
+                    // Escape char: skip a beat.
+                    if let Some(c) = chars.next() {
+                        value.push(c);
+                    } else {
+                        break;
+                    }
+                }
                 _ => value.push(c),
             }
         }
 
-        let cond = cond.unwrap();
-        let alt = Alternative::new(field, cond, value, allow_idfield)?;
-        // let rest = String::from_utf8(data_vec).map_err(|e| RuneError::Unknown(format!("{}", e)))?;
-        let rest = &data[(data.len() - data_vec.len())..];
+        let alt = Alternative::new(field, cond.unwrap(), value, allow_idfield)?;
+        let rest = &data[(data.len() - (chars.count() + extra_chars))..];
         Ok((alt, rest))
     }
 }
@@ -405,6 +423,14 @@ impl std::fmt::Display for Alternative {
         write!(f, "{}", self.encode())
     }
 }
+
+impl std::cmp::PartialEq for Alternative {
+    fn eq(&self, other: &Self) -> bool {
+        self.field == other.field && self.cond == other.cond && self.value == other.value
+    }
+}
+
+impl std::cmp::Eq for Alternative {}
 
 #[derive(Debug, Clone)]
 pub struct Restriction {
@@ -502,6 +528,27 @@ impl Restriction {
         Ok((res, local_data))
     }
 }
+
+impl std::cmp::PartialEq for Restriction {
+    fn eq(&self, other: &Self) -> bool {
+        if self.alternatives.len() != other.alternatives.len() {
+            return false;
+        }
+
+        if self
+            .alternatives
+            .iter()
+            .zip(other.alternatives.iter())
+            .any(|(mr, or)| mr.ne(or))
+        {
+            return false;
+        };
+
+        return true;
+    }
+}
+
+impl std::cmp::Eq for Restriction {}
 
 #[derive(Clone)]
 pub struct Rune {
@@ -656,7 +703,9 @@ impl Rune {
         &self,
         values: &HashMap<String, Box<dyn Tester>>,
     ) -> Result<(), RuneError> {
-        self.restrictions.iter().try_for_each(|res| res.test(values))
+        self.restrictions
+            .iter()
+            .try_for_each(|res| res.test(values))
     }
 
     pub fn is_authorized(&self, other: Rune) -> bool {
@@ -666,7 +715,6 @@ impl Rune {
             add_padding(compressor.size() + data.len(), &mut data);
             compressor.update(&data);
         }
-
         compressor.state().inner() == other.compressor.state().inner()
     }
 
@@ -677,7 +725,7 @@ impl Rune {
     ) -> Result<(), RuneError> {
         let rune = Rune::from_base64(b64str)?;
         if !self.is_authorized(rune) {
-            return Err(RuneError::Unauthorized)
+            return Err(RuneError::Unauthorized);
         }
         self.are_restrictions_met(values)
     }
@@ -743,6 +791,10 @@ const PUNCTUATION: [char; 31] = [
     '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*', '+', ',', '-', '.', '/', ':', ';', '?', '<',
     '=', '>', '@', '[', '\\', ']', '^', '`', '{', '|', '}', '~',
 ];
+
+fn is_separator(c: char) -> bool {
+    PUNCTUATION.contains(&c)
+}
 
 fn contains_punctuation(s: &str) -> bool {
     for c in PUNCTUATION {
@@ -975,7 +1027,11 @@ mod tests {
     fn test_alternatives() -> Result<(), RuneError> {
         // test_alt_condition takes away some of the overhead to make the test
         // readable.
-        fn test_alt_condition(alt: &Alternative, field: String, value: String) -> Result<(), RuneError> {
+        fn test_alt_condition(
+            alt: &Alternative,
+            field: String,
+            value: String,
+        ) -> Result<(), RuneError> {
             let mut t: HashMap<String, Box<dyn Tester>> = HashMap::new();
             t.insert(field, Box::new(ConditionTester { value }));
             alt.test(&t)
@@ -985,7 +1041,9 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::Missing, "".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is present"
         );
         assert!(test_alt_condition(&alt, "f2".to_string(), "1".to_string()).is_ok());
@@ -995,19 +1053,27 @@ mod tests {
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: != 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: != 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: != 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: != 1"
         );
 
@@ -1020,7 +1086,9 @@ mod tests {
         )?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: = 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
@@ -1038,12 +1106,16 @@ mod tests {
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: does not start with 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: does not start with 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_ok());
@@ -1059,11 +1131,15 @@ mod tests {
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: does not end with 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: does not end with 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_ok());
@@ -1082,7 +1158,9 @@ mod tests {
         assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "020".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "020".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: does not contain 1"
         );
 
@@ -1090,28 +1168,40 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: >= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: >= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: >= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: >= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: >= 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "0".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "x".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "x".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: not an integer field"
         );
 
@@ -1119,7 +1209,9 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "x".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: not a valid integer"
         );
 
@@ -1127,22 +1219,30 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: <= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: <= 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "0".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "0".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: <= 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "x".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "x".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: not an integer field"
         );
 
@@ -1150,7 +1250,9 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "x".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: not a valid integer"
         );
 
@@ -1158,17 +1260,23 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::LexLT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered after 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered after 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "010".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "10101".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered after 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "0".to_string()).is_ok());
@@ -1178,25 +1286,35 @@ mod tests {
         let alt = Alternative::new("f1".to_string(), Condition::LexGT, "1".to_string(), false)?;
         assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "1".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "1".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered before 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "01".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "01".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered before 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "010".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "010".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered before 1"
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "10101".to_string()).is_ok());
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "0".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "0".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered before 1"
         );
         assert_eq!(
-            test_alt_condition(&alt, "f1".to_string(), "020".to_string()).unwrap_err().to_string(),
+            test_alt_condition(&alt, "f1".to_string(), "020".to_string())
+                .unwrap_err()
+                .to_string(),
             *"f1: is the same or ordered before 1"
         );
 
@@ -1255,7 +1373,7 @@ mod tests {
                 "VALID" => {
                     println!("{}", splits[1]);
                     let rune1 = Rune::from_str(splits[2]).unwrap();
-                    let rune2 = Rune::from_base64(splits[3]).unwrap();
+                    let rune2: Rune = Rune::from_base64(splits[3]).unwrap();
                     last_rune1 = Some(rune1.clone());
                     last_rune2 = Some(rune2.clone());
                     assert_eq!(rune1.to_string(), rune2.to_string());
@@ -1295,10 +1413,10 @@ mod tests {
                     println!("{}", splits[1]);
                     let rune1 = Rune::from_str(splits[2]).unwrap();
                     let rune2 = Rune::from_base64(splits[3]).unwrap();
-                    assert!(!mr.is_authorized(rune1));
-                    assert!(!mr.is_authorized(rune2));
+                    assert!(!mr.is_authorized(rune1.clone()));
+                    assert!(!mr.is_authorized(rune2.clone()));
                 }
-                _ => {
+                "PASS" | "FAIL" => {
                     assert!(splits[0] == "PASS" || splits[0] == "FAIL");
                     let rune1 = last_rune1.clone().unwrap();
                     let rune2 = last_rune2.clone().unwrap();
@@ -1321,6 +1439,36 @@ mod tests {
                         assert!(rune1.are_restrictions_met(&values).is_err());
                         assert!(rune2.are_restrictions_met(&values).is_err());
                     }
+                }
+                "DERIVE" => {
+                    println!("{}", splits[1]);
+                    let mut rune1 = Rune::from_base64(splits[2]).unwrap();
+                    assert!(mr.is_authorized(rune1.clone()));
+                    let rune2 = Rune::from_base64(splits[3]).unwrap();
+                    assert!(mr.is_authorized(rune2.clone()));
+                    // assert!(rune1.is_authorized(rune2.clone()));
+
+                    let mut alts = Vec::new();
+                    let mut b = &splits[4..];
+                    while !b.is_empty() {
+                        alts.push(
+                            Alternative::new(
+                                b[0].to_string(),
+                                b[1].try_into().unwrap(),
+                                b[2].to_string(),
+                                true,
+                            )
+                            .unwrap(),
+                        );
+                        b = &b[3..];
+                    }
+                    rune1.add_restriction(Restriction { alternatives: alts });
+                    assert!(rune1.authcode() == rune2.authcode());
+                    last_rune1 = Some(rune1);
+                    last_rune2 = Some(rune2);
+                }
+                p => {
+                    panic!("{} is not handled", p)
                 }
             }
         }
