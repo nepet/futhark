@@ -93,6 +93,14 @@ impl ToString for State {
     }
 }
 
+impl std::cmp::PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl std::cmp::Eq for State {}
+
 #[derive(Clone)]
 pub struct Compressor {
     state: State,
@@ -140,6 +148,14 @@ impl Default for Compressor {
         Self::new()
     }
 }
+
+impl std::cmp::PartialEq for Compressor {
+    fn eq(&self, other: &Self) -> bool {
+        self.state.eq(&other.state) && self.len == other.len
+    }
+}
+
+impl std::cmp::Eq for Compressor {}
 
 #[cfg(test)]
 mod tests {

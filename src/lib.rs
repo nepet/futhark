@@ -715,7 +715,7 @@ impl Rune {
             add_padding(compressor.size() + data.len(), &mut data);
             compressor.update(&data);
         }
-        compressor.state().inner() == other.compressor.state().inner()
+        compressor == other.compressor
     }
 
     pub fn check_with_reason(
