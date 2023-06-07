@@ -708,9 +708,9 @@ impl Rune {
             .try_for_each(|res| res.test(values))
     }
 
-    pub fn is_authorized(&self, other: Rune) -> bool {
+    pub fn is_authorized(&self, other: &Rune) -> bool {
         let mut compressor = sha256::Compressor::from_bytes(self.authcode, 64);
-        for r in other.restrictions {
+        for r in other.restrictions.iter() {
             let mut data = r.encode().as_bytes().to_vec();
             add_padding(compressor.size() + data.len(), &mut data);
             compressor.update(&data);
@@ -724,7 +724,7 @@ impl Rune {
         values: &HashMap<String, Box<dyn Tester>>,
     ) -> Result<(), RuneError> {
         let rune = Rune::from_base64(b64str)?;
-        if !self.is_authorized(rune) {
+        if !self.is_authorized(&rune) {
             return Err(RuneError::Unauthorized);
         }
         self.are_restrictions_met(values)
@@ -854,7 +854,7 @@ mod tests {
 
         let digest = check_auth_sha(&secret, vec![]);
         assert_eq!(mr.authcode(), digest);
-        assert!(mr.is_authorized(Rune::from_authcode(mr.authcode(), vec![])));
+        assert!(mr.is_authorized(&Rune::from_authcode(mr.authcode(), vec![])));
 
         // Add restriction
         let restriction = Restriction::new(vec![Alternative::new(
@@ -870,8 +870,8 @@ mod tests {
             mr.authcode(),
             check_auth_sha(&secret, vec![restriction.clone()])
         );
-        assert!(!mr.is_authorized(Rune::from_authcode(mr.authcode(), vec![])));
-        assert!(mr.is_authorized(Rune::from_authcode(
+        assert!(!mr.is_authorized(&Rune::from_authcode(mr.authcode(), vec![])));
+        assert!(mr.is_authorized(&Rune::from_authcode(
             mr.authcode(),
             vec![restriction.clone()]
         )));
@@ -886,19 +886,19 @@ mod tests {
             mr.authcode(),
             check_auth_sha(&secret, vec![restriction.clone(), long_restriction.clone()])
         );
-        assert!(!mr.is_authorized(Rune::from_authcode(
+        assert!(!mr.is_authorized(&Rune::from_authcode(
             mr.authcode(),
             vec![restriction.clone()]
         )));
-        assert!(!mr.is_authorized(Rune::from_authcode(
+        assert!(!mr.is_authorized(&Rune::from_authcode(
             mr.authcode(),
             vec![long_restriction.clone()]
         )));
-        assert!(!mr.is_authorized(Rune::from_authcode(
+        assert!(!mr.is_authorized(&Rune::from_authcode(
             mr.authcode(),
             vec![long_restriction.clone(), restriction.clone()]
         )));
-        assert!(mr.is_authorized(Rune::from_authcode(
+        assert!(mr.is_authorized(&Rune::from_authcode(
             mr.authcode(),
             vec![restriction, long_restriction]
         )));
@@ -1345,7 +1345,7 @@ mod tests {
         let (r3, _) = Restriction::decode("f4=v4", false)?;
         other.add_restriction(r3);
 
-        assert!(mr.is_authorized(other));
+        assert!(mr.is_authorized(&other));
         Ok(())
     }
 
@@ -1378,8 +1378,8 @@ mod tests {
                     last_rune2 = Some(rune2.clone());
                     assert_eq!(rune1.to_string(), rune2.to_string());
                     assert_eq!(rune1.to_base64(), rune2.to_base64());
-                    assert!(mr.is_authorized(rune1.clone()));
-                    assert!(mr.is_authorized(rune2.clone()));
+                    assert!(mr.is_authorized(&rune1));
+                    assert!(mr.is_authorized(&rune2));
                     if splits.len() == 6 {
                         assert_eq!(
                             rune1.restrictions[0].alternatives[0].encode(),
@@ -1413,8 +1413,8 @@ mod tests {
                     println!("{}", splits[1]);
                     let rune1 = Rune::from_str(splits[2]).unwrap();
                     let rune2 = Rune::from_base64(splits[3]).unwrap();
-                    assert!(!mr.is_authorized(rune1.clone()));
-                    assert!(!mr.is_authorized(rune2.clone()));
+                    assert!(!mr.is_authorized(&rune1));
+                    assert!(!mr.is_authorized(&rune2));
                 }
                 "PASS" | "FAIL" => {
                     assert!(splits[0] == "PASS" || splits[0] == "FAIL");
@@ -1443,9 +1443,9 @@ mod tests {
                 "DERIVE" => {
                     println!("{}", splits[1]);
                     let mut rune1 = Rune::from_base64(splits[2]).unwrap();
-                    assert!(mr.is_authorized(rune1.clone()));
+                    assert!(mr.is_authorized(&rune1));
                     let rune2 = Rune::from_base64(splits[3]).unwrap();
-                    assert!(mr.is_authorized(rune2.clone()));
+                    assert!(mr.is_authorized(&rune2));
                     // assert!(rune1.is_authorized(rune2.clone()));
 
                     let mut alts = Vec::new();
