@@ -565,7 +565,12 @@ impl Rune {
     ///
     /// * `authcode` A sha256 base state that this rune is derived from.
     /// * `restrictions` A set of restrictions that this rune requires.
-    pub fn new(authcode: [u8; 32], restrictions: Vec<Restriction>) -> Self {
+    pub fn new(
+        authcode: [u8; 32],
+        restrictions: Vec<Restriction>,
+        unique_id: Option<String>,
+        version: Option<String>,
+    ) -> Result<Self, RuneError> {
         // An auth_base is always len 64 as it is the secret from which we derive
         // the rune.
         let compressor = sha256::Compressor::from_bytes(authcode, 64);
@@ -576,12 +581,22 @@ impl Rune {
             authcode,
         };
 
+        let mut restrictions = restrictions;
+
+        // Add unique id if it is set. It has to be the first element;
+        if let Some(id) = unique_id {
+            let uid = Restriction::unique_id(id, version)?;
+            restrictions.reverse();
+            restrictions.push(uid);
+            restrictions.reverse();
+        }
+
         // Append other restrictions
         for r in restrictions {
             rune.add_restriction(r)
         }
 
-        rune
+        Ok(rune)
     }
 
     /// What the server calls to create a [`Rune`] that is derived from a
@@ -618,17 +633,7 @@ impl Rune {
         add_padding(seedsecret.len(), &mut base);
         compressor.update(&base);
 
-        let mut restrictions = restrictions;
-
-        // Add unique id if it is set. It has to be the first element;
-        if let Some(id) = unique_id {
-            let uid = Restriction::unique_id(id, version)?;
-            restrictions.reverse();
-            restrictions.push(uid);
-            restrictions.reverse();
-        }
-
-        Ok(Self::new(compressor.state().into(), restrictions))
+        Self::new(compressor.state().into(), restrictions, unique_id, version)
     }
 
     /// Returns a [`Rune`] that uses the `authcode` as a base state for the sha
@@ -1472,5 +1477,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_stuff() {
+        let secret = vec![0; 16];
+        let (r1, _) = Restriction::decode("f1=v1|f2=v2", false).unwrap();
+        let (r2, _) = Restriction::decode("f2/v3", false).unwrap();
+        let mut mr = Rune::new_master_rune(&secret, vec![r1, r2], None, None).unwrap();
+        let enc = mr.to_base64();
+        println!("rune, len {:?}: {}", enc.len(), enc);
+        let (r3, _) = Restriction::decode("field5=myworld", false).unwrap();
+        mr.add_restriction(r3);
+        let enc = mr.to_base64();
+        println!("rune, len {:?}: {}", enc.len(), enc);
     }
 }
