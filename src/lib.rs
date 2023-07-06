@@ -1473,4 +1473,18 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_stuff() {
+        let secret = vec![0; 16];
+        let (r1, _) = Restriction::decode("f1=v1|f2=v2", false).unwrap();
+        let (r2, _) = Restriction::decode("f2/v3", false).unwrap();
+        let mut mr = Rune::new_master_rune(&secret, vec![r1, r2], None, None).unwrap();
+        let enc = mr.to_base64();
+        println!("rune, len {:?}: {}", enc.len(), enc);
+        let (r3, _) = Restriction::decode("field5=myworld", false).unwrap();
+        mr.add_restriction(r3);
+        let enc = mr.to_base64();
+        println!("rune, len {:?}: {}", enc.len(), enc);
+    }
 }
