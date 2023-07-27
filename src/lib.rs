@@ -732,7 +732,7 @@ impl Rune {
         if !self.is_authorized(&rune) {
             return Err(RuneError::Unauthorized);
         }
-        self.are_restrictions_met(values)
+        rune.are_restrictions_met(values)
     }
 
     pub fn to_base64(&self) -> String {
@@ -1480,16 +1480,36 @@ mod tests {
     }
 
     #[test]
-    fn test_stuff() {
+    fn test_whole_cycle() {
         let secret = vec![0; 16];
-        let (r1, _) = Restriction::decode("f1=v1|f2=v2", false).unwrap();
-        let (r2, _) = Restriction::decode("f2/v3", false).unwrap();
-        let mut mr = Rune::new_master_rune(&secret, vec![r1, r2], None, None).unwrap();
-        let enc = mr.to_base64();
-        println!("rune, len {:?}: {}", enc.len(), enc);
-        let (r3, _) = Restriction::decode("field5=myworld", false).unwrap();
-        mr.add_restriction(r3);
-        let enc = mr.to_base64();
-        println!("rune, len {:?}: {}", enc.len(), enc);
+        let mr = Rune::new_master_rune(&secret, vec![], None, None).unwrap();
+
+        // Create restrictions from a string as we would do it in real life.
+        let mut res_str = "pubkey=mypubkey";
+        let mut res = vec![];
+        while !res_str.is_empty() {
+            let (restriction, rest) = Restriction::decode(res_str, false).unwrap();
+            res.push(restriction);
+            res_str = rest;
+        }
+
+        let rune = Rune::new(mr.authcode(), res, None, None).unwrap();
+        let mut checks: HashMap<String, Box<dyn Tester>> = HashMap::new();
+        checks.insert(
+            "pubkey".to_string(),
+            Box::new(ConditionTester {
+                value: "mypubkey".to_string(),
+            }),
+        );
+        assert!(mr.check_with_reason(&rune.to_base64(), &checks).is_ok());
+
+        // Add a check that should fail.
+        checks.insert(
+            "pubkey".to_string(),
+            Box::new(ConditionTester {
+                value: "wrong_pubkey".to_string(),
+            }),
+        );
+        assert!(mr.check_with_reason(&rune.to_base64(), &checks).is_err());
     }
 }
