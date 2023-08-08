@@ -464,7 +464,7 @@ impl Restriction {
             ));
         }
 
-        let mut id_str = unique_id;
+        let mut id_str: String = unique_id;
 
         if let Some(v) = version {
             id_str = format!("{}-{}", id_str, v);
@@ -694,6 +694,22 @@ impl Rune {
         let rest_str = String::from_utf8(rune_byte[32..].to_vec())
             .map_err(|e| RuneError::Unknown(format!("{}", e)))?;
         Self::from_str(&format!("{}:{}", auth_str, rest_str))
+    }
+
+    pub fn get_id(self) -> Option<String> {
+        let id = self
+            .restrictions
+            .iter()
+            .flat_map(|r| r.alternatives.iter())
+            .find(|&a| a.is_unique_id());
+        match id {
+            Some(a) => {
+                // id is the first part of the empty field separated from the
+                // version by a hyphen.
+                a.get_value().split('-').next().map(str::to_string)
+            }
+            None => None,
+        }
     }
 
     pub fn add_restriction(&mut self, res: Restriction) {
@@ -1511,5 +1527,32 @@ mod tests {
             }),
         );
         assert!(mr.check_with_reason(&rune.to_base64(), &checks).is_err());
+    }
+
+    #[test]
+    fn test_rune_id() {
+        let secret = vec![0; 16];
+
+        // All empty
+        let mr = Rune::new_master_rune(&secret, vec![], None, None).unwrap();
+        assert!(mr.get_id().is_none());
+
+        // Version empty
+        let mr = Rune::new_master_rune(&secret, vec![], Some("myid".to_string()), None).unwrap();
+        assert!(mr.get_id().unwrap() == *"myid");
+
+        // Version set, id empty
+        let mr = Rune::new_master_rune(&secret, vec![], None, Some("version".to_string())).unwrap();
+        assert!(mr.get_id().is_none());
+
+        // Version set, id set
+        let mr = Rune::new_master_rune(
+            &secret,
+            vec![],
+            Some("myid".to_string()),
+            Some("version".to_string()),
+        )
+        .unwrap();
+        assert!(mr.get_id().unwrap() == *"myid");
     }
 }
