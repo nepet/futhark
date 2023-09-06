@@ -457,6 +457,11 @@ impl Restriction {
         Ok(Restriction { alternatives })
     }
 
+    pub fn add_alternative(mut self, alt: Alternative) -> Self {
+        self.alternatives.push(alt);
+        self
+    }
+
     pub fn unique_id(unique_id: String, version: Option<String>) -> Result<Self, RuneError> {
         if unique_id.contains('-') {
             return Err(RuneError::ValueError(
