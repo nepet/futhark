@@ -129,14 +129,14 @@ fn why(cond: bool, field: &str, xpl: String) -> Result<(), RuneError> {
 }
 
 /// A trait that defines how an alternative is tested.
-pub trait Tester {
+pub trait Check {
     /// Returns `None` if the test is met and a reason `String` if the
     /// test conditions are not met.
     ///
     /// # Arguments
     ///
-    /// * `alt` - The alternative to check against the `Tester`.
-    fn test(&self, alt: &Alternative) -> Result<(), RuneError>;
+    /// * `alt` - The alternative to check against the `Check`.
+    fn check_alternative(&self, alt: &Alternative) -> Result<(), RuneError>;
 }
 
 /// A `Tester` trait implementation that checks for matching conditions. The
@@ -146,8 +146,8 @@ pub struct ConditionTester {
     pub value: String,
 }
 
-impl Tester for ConditionTester {
-    fn test(&self, alt: &Alternative) -> Result<(), RuneError> {
+impl Check for ConditionTester {
+    fn check_alternative(&self, alt: &Alternative) -> Result<(), RuneError> {
         match alt.cond {
             Condition::Missing => why(false, &alt.field, "is present".to_string()),
             Condition::Equal => why(
@@ -316,7 +316,7 @@ impl Alternative {
     /// # Arguments
     ///
     /// * `values` A map of type `<String, Tester>` that represent the field names and the tests that have to be performed on the field.
-    pub fn test(&self, values: &HashMap<String, Box<dyn Tester>>) -> Result<(), RuneError> {
+    pub fn test(&self, values: &HashMap<String, Box<dyn Check>>) -> Result<(), RuneError> {
         // Wrapper to return an explanation if the condition is not met.
 
         // Check if condition is a comment, this is always true. We can skip any
@@ -346,7 +346,7 @@ impl Alternative {
         }
 
         let tester = values.get(&self.field).unwrap();
-        tester.test(self)
+        tester.check_alternative(self)
     }
 
     /// Returns an encoded String of the alternative. A string will be encoded
@@ -483,7 +483,7 @@ impl Restriction {
 
     /// Test a set of values against a restriction. Returns `None` on success
     /// and a `String` with all explanations otherwise.
-    pub fn test(&self, values: &HashMap<String, Box<dyn Tester>>) -> Result<(), RuneError> {
+    pub fn test(&self, values: &HashMap<String, Box<dyn Check>>) -> Result<(), RuneError> {
         // Iterate and test all alternatives and collect results.
         let (oks, errs): (Vec<_>, Vec<_>) = self
             .alternatives
@@ -727,7 +727,7 @@ impl Rune {
     /// Returns None if met, Reason otherwise.
     pub fn are_restrictions_met(
         &self,
-        values: &HashMap<String, Box<dyn Tester>>,
+        values: &HashMap<String, Box<dyn Check>>,
     ) -> Result<(), RuneError> {
         self.restrictions
             .iter()
@@ -747,7 +747,7 @@ impl Rune {
     pub fn check_with_reason(
         &self,
         b64str: &str,
-        values: &HashMap<String, Box<dyn Tester>>,
+        values: &HashMap<String, Box<dyn Check>>,
     ) -> Result<(), RuneError> {
         let rune = Rune::from_base64(b64str)?;
         if !self.is_authorized(&rune) {
@@ -1058,7 +1058,7 @@ mod tests {
             field: String,
             value: String,
         ) -> Result<(), RuneError> {
-            let mut t: HashMap<String, Box<dyn Tester>> = HashMap::new();
+            let mut t: HashMap<String, Box<dyn Check>> = HashMap::new();
             t.insert(field, Box::new(ConditionTester { value }));
             alt.test(&t)
         }
@@ -1446,7 +1446,7 @@ mod tests {
                     assert!(splits[0] == "PASS" || splits[0] == "FAIL");
                     let rune1 = last_rune1.clone().unwrap();
                     let rune2 = last_rune2.clone().unwrap();
-                    let mut values: HashMap<String, Box<dyn Tester>> = HashMap::new();
+                    let mut values: HashMap<String, Box<dyn Check>> = HashMap::new();
                     let rest = splits[1..].to_vec();
                     for var in rest {
                         let parts: Vec<&str> = var.split('=').collect();
