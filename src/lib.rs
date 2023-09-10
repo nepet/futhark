@@ -224,17 +224,41 @@ impl Check for ConditionChecker {
     }
 }
 
+#[derive(Clone)]
+struct MapChecker {
+    map: HashMap<String, String>,
+}
+
+impl Check for MapChecker {
+    fn check_alternative(&self, alt: &Alternative) -> Result<(), RuneError> {
+        // The field is missing.
+        if !self.map.contains_key(&alt.field) {
+            // Default to ignoring id field as long as no version is set. A
+            // version is separated by a `-`, e.g `-[version]`.
+            if alt.is_unique_id() {
+                return why(
+                    !alt.value.contains('-'),
+                    &alt.field,
+                    format!("unknown version {}", alt.value),
+                );
+            }
+            // This can only be true if the condition for this test is
+            // `Condition::Missing`.
+            return why(
+                alt.cond == Condition::Missing,
+                &alt.field,
+                "is missing".to_string(),
+            );
+        }
+
+        let checker = ConditionChecker {
+            value: self.map.get(&alt.field).unwrap().clone(),
+        };
+        checker.check_alternative(alt)
+    }
+}
 /// An [`Alternative`] is the smallest component of a rune. It consists of a single
 /// combination of a field name, a condition and a value that can be checked.
-///
-/// # Example
-/// An alternative that requires the field with the name `f1` to be missing.
-/// ```
-/// use futhark::{Alternative, Condition};
-/// use std::collections::HashMap;
-///
-/// let alt = Alternative::new("f1".to_string(), Condition::Missing, "".to_string(), false).unwrap();
-/// assert!(alt.test(&HashMap::new()).is_ok());
 /// ```
 #[derive(Debug, Clone)]
 pub struct Alternative {
@@ -315,37 +339,14 @@ impl Alternative {
     ///
     /// # Arguments
     ///
-    /// * `values` A map of type `<String, Check>` that represent the field names and the tests that have to be performed on the field.
-    pub fn test(&self, params: &HashMap<String, Box<dyn Check>>) -> Result<(), RuneError> {
-        // Wrapper to return an explanation if the condition is not met.
-
+    /// * `checker` An implementation of the `Checker` trait.
+    pub fn test<T: Check>(&self, checker: T) -> Result<(), RuneError> {
         // Check if condition is a comment, this is always true. We can skip any
         // further checks.
         if self.cond == Condition::Comment {
             return Ok(());
         }
 
-        // The field is missing.
-        if !params.contains_key(&self.field) {
-            // Default to ignoring id field as long as no version is set. A
-            // version is separated by a `-`, e.g `-[version]`.
-            if self.is_unique_id() {
-                return why(
-                    !self.value.contains('-'),
-                    &self.field,
-                    format!("unknown version {}", self.value),
-                );
-            }
-            // This can only be true if the condition for this test is
-            // `Condition::Missing`.
-            return why(
-                self.cond == Condition::Missing,
-                &self.field,
-                "is missing".to_string(),
-            );
-        }
-
-        let checker = params.get(&self.field).unwrap();
         checker.check_alternative(self)
     }
 
@@ -483,13 +484,13 @@ impl Restriction {
 
     /// Test a set of values against a restriction. Returns `None` on success
     /// and a `String` with all explanations otherwise.
-    pub fn test(&self, values: &HashMap<String, Box<dyn Check>>) -> Result<(), RuneError> {
+    pub fn test<T: Check + Clone>(&self, checker: T) -> Result<(), RuneError> {
         // Iterate and test all alternatives and collect results.
         let (oks, errs): (Vec<_>, Vec<_>) = self
             .alternatives
             .clone()
             .into_iter()
-            .map(|alt| alt.test(values))
+            .map(|alt| alt.test(checker.clone()))
             .partition(Result::is_ok);
         if !oks.is_empty() {
             // We got AT LEAST ONE OK so at least one `Alternative` was
@@ -725,13 +726,10 @@ impl Rune {
     }
 
     /// Returns None if met, Reason otherwise.
-    pub fn are_restrictions_met(
-        &self,
-        values: &HashMap<String, Box<dyn Check>>,
-    ) -> Result<(), RuneError> {
+    pub fn are_restrictions_met<T: Check + Clone>(&self, checker: T) -> Result<(), RuneError> {
         self.restrictions
             .iter()
-            .try_for_each(|res| res.test(values))
+            .try_for_each(|res| res.test(checker.clone()))
     }
 
     pub fn is_authorized(&self, other: &Rune) -> bool {
@@ -744,16 +742,16 @@ impl Rune {
         compressor == other.compressor
     }
 
-    pub fn check_with_reason(
+    pub fn check_with_reason<T: Check + Clone>(
         &self,
         b64str: &str,
-        values: &HashMap<String, Box<dyn Check>>,
+        checker: T,
     ) -> Result<(), RuneError> {
         let rune = Rune::from_base64(b64str)?;
         if !self.is_authorized(&rune) {
             return Err(RuneError::Unauthorized);
         }
-        rune.are_restrictions_met(values)
+        rune.are_restrictions_met(checker)
     }
 
     pub fn to_base64(&self) -> String {
@@ -1058,14 +1056,18 @@ mod tests {
             field: String,
             value: String,
         ) -> Result<(), RuneError> {
-            let mut t: HashMap<String, Box<dyn Check>> = HashMap::new();
-            t.insert(field, Box::new(ConditionChecker { value }));
-            alt.test(&t)
+            let mut t: HashMap<String, String> = HashMap::new();
+            t.insert(field, value);
+            alt.test(MapChecker { map: t })
         }
 
         // Condition: `!`
         let alt = Alternative::new("f1".to_string(), Condition::Missing, "".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).is_ok());
+        assert!(alt
+            .test(MapChecker {
+                map: HashMap::new()
+            })
+            .is_ok());
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1076,7 +1078,14 @@ mod tests {
 
         // Condition: `=`
         let alt = Alternative::new("f1".to_string(), Condition::Equal, "1".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "01".to_string())
@@ -1110,7 +1119,14 @@ mod tests {
             "1".to_string(),
             false,
         )?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1129,7 +1145,14 @@ mod tests {
             "1".to_string(),
             false,
         )?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "01".to_string())
@@ -1153,7 +1176,14 @@ mod tests {
             "1".to_string(),
             false,
         )?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
         assert_eq!(
@@ -1177,7 +1207,14 @@ mod tests {
             "1".to_string(),
             false,
         )?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "10".to_string()).is_ok());
@@ -1192,7 +1229,14 @@ mod tests {
 
         // Condition: `<`
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "1".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1233,7 +1277,14 @@ mod tests {
 
         // Condition: `<`: check the non-integer alternative.
         let alt = Alternative::new("f1".to_string(), Condition::IntLT, "x".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1243,7 +1294,14 @@ mod tests {
 
         // Condition: `>`
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "1".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1274,7 +1332,14 @@ mod tests {
 
         // Condition: `>`: check the non-integer alternative.
         let alt = Alternative::new("f1".to_string(), Condition::IntGT, "x".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1284,7 +1349,14 @@ mod tests {
 
         // Condition: `{`
         let alt = Alternative::new("f1".to_string(), Condition::LexLT, "1".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1310,7 +1382,14 @@ mod tests {
 
         // Condition: `}`
         let alt = Alternative::new("f1".to_string(), Condition::LexGT, "1".to_string(), false)?;
-        assert!(alt.test(&HashMap::new()).unwrap_err().to_string() == *"f1: is missing");
+        assert!(
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err()
+            .to_string()
+                == *"f1: is missing"
+        );
         assert_eq!(
             test_alt_condition(&alt, "f1".to_string(), "1".to_string())
                 .unwrap_err()
@@ -1347,9 +1426,15 @@ mod tests {
         // Condition: `#`
         let alt = Alternative::new("f1".to_string(), Condition::Comment, "1".to_string(), false)?;
         assert!(
-            alt.test(&HashMap::new()).is_ok(),
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .is_ok(),
             "Expected None, got {}",
-            alt.test(&HashMap::new()).unwrap_err(),
+            alt.test(MapChecker {
+                map: HashMap::new()
+            })
+            .unwrap_err(),
         );
         assert!(test_alt_condition(&alt, "f1".to_string(), "1".to_string()).is_ok());
         assert!(test_alt_condition(&alt, "f1".to_string(), "01".to_string()).is_ok());
@@ -1446,24 +1531,31 @@ mod tests {
                     assert!(splits[0] == "PASS" || splits[0] == "FAIL");
                     let rune1 = last_rune1.clone().unwrap();
                     let rune2 = last_rune2.clone().unwrap();
-                    let mut values: HashMap<String, Box<dyn Check>> = HashMap::new();
+                    let mut values: HashMap<String, String> = HashMap::new();
                     let rest = splits[1..].to_vec();
                     for var in rest {
                         let parts: Vec<&str> = var.split('=').collect();
                         assert_eq!(parts.len(), 2);
-                        values.insert(
-                            parts[0].to_string(),
-                            Box::new(ConditionChecker {
-                                value: parts[1].to_string(),
-                            }),
-                        );
+                        values.insert(parts[0].to_string(), parts[1].to_string());
                     }
                     if splits[0] == "PASS" {
-                        assert!(rune1.are_restrictions_met(&values).is_ok());
-                        assert!(rune2.are_restrictions_met(&values).is_ok());
+                        assert!(rune1
+                            .are_restrictions_met(MapChecker {
+                                map: values.clone()
+                            })
+                            .is_ok());
+                        assert!(rune2
+                            .are_restrictions_met(MapChecker { map: values })
+                            .is_ok());
                     } else {
-                        assert!(rune1.are_restrictions_met(&values).is_err());
-                        assert!(rune2.are_restrictions_met(&values).is_err());
+                        assert!(rune1
+                            .are_restrictions_met(MapChecker {
+                                map: values.clone()
+                            })
+                            .is_err());
+                        assert!(rune2
+                            .are_restrictions_met(MapChecker { map: values })
+                            .is_err());
                     }
                 }
                 "DERIVE" => {
@@ -1515,23 +1607,22 @@ mod tests {
         }
 
         let rune = Rune::new(mr.authcode(), res, None, None).unwrap();
-        let mut checks: HashMap<String, Box<dyn Check>> = HashMap::new();
-        checks.insert(
-            "pubkey".to_string(),
-            Box::new(ConditionChecker {
-                value: "mypubkey".to_string(),
-            }),
-        );
-        assert!(mr.check_with_reason(&rune.to_base64(), &checks).is_ok());
+        let mut checks: HashMap<String, String> = HashMap::new();
+        checks.insert("pubkey".to_string(), "mypubkey".to_string());
+        assert!(mr
+            .check_with_reason(
+                &rune.to_base64(),
+                MapChecker {
+                    map: checks.clone()
+                }
+            )
+            .is_ok());
 
         // Add a check that should fail.
-        checks.insert(
-            "pubkey".to_string(),
-            Box::new(ConditionChecker {
-                value: "wrong_pubkey".to_string(),
-            }),
-        );
-        assert!(mr.check_with_reason(&rune.to_base64(), &checks).is_err());
+        checks.insert("pubkey".to_string(), "wrong_pubkey".to_string());
+        assert!(mr
+            .check_with_reason(&rune.to_base64(), MapChecker { map: checks })
+            .is_err());
     }
 
     #[test]
