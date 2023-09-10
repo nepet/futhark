@@ -8,6 +8,7 @@ use futhark::{Alternative, Check, Condition, Restriction, Rune, RuneError};
 /// a rune is timed out. This is if the time at which the rune is used is later
 /// than the time given by the `before` field.
 /// The time is given as a utc timestamp.
+#[derive(Clone)]
 struct TimelimitTester {}
 
 impl Check for TimelimitTester {
@@ -55,9 +56,7 @@ fn main() {
     let rune = mr.to_base64();
 
     // Check rune, should be ok as "before" is 60s in the future.
-    let mut checks: HashMap<String, Box<dyn Check>> = HashMap::new();
-    checks.insert("before".to_string(), Box::new(TimelimitTester {}));
-    let check = mr.check_with_reason(&rune, &checks);
+    let check = mr.check_with_reason(&rune, TimelimitTester {});
     println!("{:?}", check); // Output: Ok(())
 
     // Add another restriction.
@@ -66,8 +65,6 @@ fn main() {
     let rune = mr.to_base64();
 
     // Check rune, should fail as new "before" is 60s in the past.
-    let mut checks: HashMap<String, Box<dyn Check>> = HashMap::new();
-    checks.insert("before".to_string(), Box::new(TimelimitTester {}));
-    let check = mr.check_with_reason(&rune, &checks);
+    let check = mr.check_with_reason(&rune, TimelimitTester {});
     println!("{:?}", check); // Output: Err(ValueError("it is too late to use this rune"))
 }
