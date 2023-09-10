@@ -229,7 +229,7 @@ impl Check for ConditionChecker {
 /// for the key matching the alternative.
 #[derive(Clone)]
 pub struct MapChecker {
-    map: HashMap<String, String>,
+    pub map: HashMap<String, String>,
 }
 
 impl Check for MapChecker {
