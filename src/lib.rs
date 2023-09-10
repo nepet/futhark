@@ -149,7 +149,7 @@ pub struct ConditionChecker {
 impl Check for ConditionChecker {
     fn check_alternative(&self, alt: &Alternative) -> Result<(), RuneError> {
         match alt.cond {
-            Condition::Missing => why(false, &alt.field, "is present".to_string()),
+            Condition::Missing => why(self.value.is_empty(), &alt.field, "is present".to_string()),
             Condition::Equal => why(
                 self.value == alt.value,
                 &alt.field,
