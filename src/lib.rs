@@ -224,8 +224,11 @@ impl Check for ConditionChecker {
     }
 }
 
+/// A struct that implements the `Check` trait and checks conditions based on
+/// a `HashMap<String, String>`. It calls the `ConditionChecker` with the value
+/// for the key matching the alternative.
 #[derive(Clone)]
-struct MapChecker {
+pub struct MapChecker {
     map: HashMap<String, String>,
 }
 
