@@ -24,6 +24,8 @@ pub enum RuneError {
     LessRestrictions,
     #[error("does not match master rune")]
     DoesNotMatch,
+    #[error("conversion error {0}")]
+    Conversion(String),
 }
 
 /// Conditions are the heart of a [`Rune`]. They are to be met and build
@@ -559,6 +561,22 @@ impl std::cmp::PartialEq for Restriction {
 
 impl std::cmp::Eq for Restriction {}
 
+impl TryFrom<&str> for Restriction {
+    type Error = RuneError;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        let (res, rest) = Restriction::decode(value, false)?;
+        if !rest.is_empty() {
+            Err(RuneError::ValueError(format!(
+                "found more than one restriction in {}",
+                value
+            )))
+        } else {
+            Ok(res)
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Rune {
     restrictions: Vec<Restriction>,
@@ -602,7 +620,7 @@ impl Rune {
 
         // Append other restrictions
         for r in restrictions {
-            rune.add_restriction(r)
+            rune.add_restriction(r)?;
         }
 
         Ok(rune)
@@ -721,11 +739,18 @@ impl Rune {
         }
     }
 
-    pub fn add_restriction(&mut self, res: Restriction) {
+    pub fn add_restriction<T: TryInto<Restriction> + Clone>(
+        &mut self,
+        res: T,
+    ) -> Result<&Self, RuneError> {
+        let res: Restriction = res
+            .try_into()
+            .map_err(|_| RuneError::Conversion(String::new()))?;
         self.restrictions.push(res.clone());
         let mut data = res.encode().as_bytes().to_vec();
         add_padding(self.compressor.size() + data.len(), &mut data);
         self.compressor.update(&data);
+        Ok(self)
     }
 
     /// Returns None if met, Reason otherwise.
@@ -892,7 +917,7 @@ mod tests {
         )
         .unwrap()])
         .unwrap();
-        mr.add_restriction(restriction.clone());
+        _ = mr.add_restriction(restriction.clone());
         assert_eq!(
             mr.authcode(),
             check_auth_sha(&secret, vec![restriction.clone()])
@@ -908,7 +933,7 @@ mod tests {
         let value = (0..65).map(|_| "v1").collect();
         let alternative = Alternative::new(field, Condition::Equal, value, false).unwrap();
         let long_restriction = Restriction::new(vec![alternative]).unwrap();
-        mr.add_restriction(long_restriction.clone());
+        _ = mr.add_restriction(long_restriction.clone());
         assert_eq!(
             mr.authcode(),
             check_auth_sha(&secret, vec![restriction.clone(), long_restriction.clone()])
@@ -1457,7 +1482,7 @@ mod tests {
 
         let mut other = Rune::from_str(&enc)?;
         let (r3, _) = Restriction::decode("f4=v4", false)?;
-        other.add_restriction(r3);
+        _ = other.add_restriction(r3);
 
         assert!(mr.is_authorized(&other));
         Ok(())
@@ -1583,7 +1608,7 @@ mod tests {
                         );
                         b = &b[3..];
                     }
-                    rune1.add_restriction(Restriction { alternatives: alts });
+                    _ = rune1.add_restriction(Restriction { alternatives: alts });
                     assert!(rune1.authcode() == rune2.authcode());
                     last_rune1 = Some(rune1);
                     last_rune2 = Some(rune2);

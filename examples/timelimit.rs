@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::collections::HashMap;
 
 use chrono::Utc;
 use futhark::{Alternative, Check, Condition, Restriction, Rune, RuneError};
@@ -52,7 +51,7 @@ fn main() {
     // Add restriction.
     let now = Utc::now().naive_utc().timestamp();
     let (res, _) = Restriction::decode(&format!("before={}", now + 60), false).unwrap();
-    mr.add_restriction(res);
+    _ = mr.add_restriction(res);
     let rune = mr.to_base64();
 
     // Check rune, should be ok as "before" is 60s in the future.
@@ -61,7 +60,7 @@ fn main() {
 
     // Add another restriction.
     let (res, _) = Restriction::decode(&format!("before={}", now - 60), false).unwrap();
-    mr.add_restriction(res);
+    _ = mr.add_restriction(res);
     let rune = mr.to_base64();
 
     // Check rune, should fail as new "before" is 60s in the past.
