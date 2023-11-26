@@ -3,6 +3,7 @@ name = "runeauth"
 version = "0.1.0"
 edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
+license = "MIT"
 license-file = "LICENSE"
 repository = "https://github.com/nepet/futhark"
 readme = "README.md"
