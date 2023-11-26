@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use chrono::Utc;
-use futhark::{Alternative, Check, Condition, Restriction, Rune, RuneError};
+use runeauth::{Alternative, Check, Condition, Restriction, Rune, RuneError};
 
 /// TimelimitTester implements a `futhark::Tester` that is called to check if
 /// a rune is timed out. This is if the time at which the rune is used is later

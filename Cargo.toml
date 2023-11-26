@@ -1,5 +1,5 @@
 [package]
-name = "futhark"
+name = "runeauth"
 version = "0.1.0"
 edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]

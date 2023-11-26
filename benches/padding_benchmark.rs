@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use futhark::add_padding;
+use runeauth::add_padding;
 
 fn inplace_padding_benchmark(c: &mut Criterion) {
     let mut arr = black_box(vec![1u8; 27]);

@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use futhark::{Alternative, Restriction};
+use runeauth::{Alternative, Restriction};
 
 fn decoding_alternative_benchmark(c: &mut Criterion) {
     let alternatives = black_box("f1=v1|f2!|f3$foobar&f1/v2");
