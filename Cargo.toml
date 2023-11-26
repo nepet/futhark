@@ -3,6 +3,12 @@ name = "runeauth"
 version = "0.1.0"
 edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
+license-file = "LICENSE"
+repository = "https://github.com/nepet/futhark"
+readme = "README.md"
+description = "Runeauth - Simple Extendable Cookies"
+keywords = ["autorization", "cookies", "sercurity", "access-control"]
+categories = ["authentication", "cryptography"]
 
 [dependencies]
 anyhow = "1.0.66"
