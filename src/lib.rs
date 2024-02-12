@@ -288,12 +288,14 @@ impl Alternative {
     /// [`PUNCTUATION`] or if the field is empty without allowing idfield.
     /// It returns a [`RuneError::InvalidCondition`] if field is an idfield but
     /// the condition is not [`Condition::Equal`].
-    pub fn new(
-        field: String,
+    pub fn new<S: Into<String>>(
+        field: S,
         cond: Condition,
-        value: String,
+        value: S,
         allow_idfield: bool,
     ) -> Result<Self, RuneError> {
+        let field = field.into();
+        let value = value.into();
         if contains_punctuation(&field) {
             // A field must not contain any punctuation (C's ispunct()).
             return Err(RuneError::InvalidField(format!(
@@ -909,14 +911,11 @@ mod tests {
         assert!(mr.is_authorized(&Rune::from_authcode(mr.authcode(), vec![])));
 
         // Add restriction
-        let restriction = Restriction::new(vec![Alternative::new(
-            "f1".into(),
-            Condition::Equal,
-            "v1".into(),
-            false,
-        )
-        .unwrap()])
-        .unwrap();
+        let restriction =
+            Restriction::new(vec![
+                Alternative::new("f1", Condition::Equal, "v1", false).unwrap()
+            ])
+            .unwrap();
         _ = mr.add_restriction(restriction.clone());
         assert_eq!(
             mr.authcode(),
@@ -929,8 +928,8 @@ mod tests {
         )));
 
         // Add long restriction
-        let field = (0..17).map(|_| "f").collect();
-        let value = (0..65).map(|_| "v1").collect();
+        let field: String = (0..17).map(|_| "f").collect();
+        let value: String = (0..65).map(|_| "v1").collect();
         let alternative = Alternative::new(field, Condition::Equal, value, false).unwrap();
         let long_restriction = Restriction::new(vec![alternative]).unwrap();
         _ = mr.add_restriction(long_restriction.clone());
