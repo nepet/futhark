@@ -882,6 +882,21 @@ pub fn add_padding(length: usize, buf: &mut Vec<u8>) {
     buf.append(&mut len_bits.to_be_bytes().to_vec());
 }
 
+#[allow(unused_macros)]
+macro_rules! restrictions {
+    () => {
+        vec![]
+    };
+    ($s:expr) => {
+        $s.split('&')
+            .map(|r| Restriction::try_from(r).unwrap())
+            .collect::<Vec<Restriction>>()
+    };
+    ($($arg:tt)+) => {
+        restrictions!(format!($($arg)+))
+    };
+}
+
 // Here comes the tests!
 #[cfg(test)]
 mod tests {
@@ -899,6 +914,15 @@ mod tests {
         let mut hasher = Sha256::new();
         hasher.update(&stream);
         hasher.finalize().try_into().unwrap()
+    }
+
+    #[test]
+    fn test_restrictions_macro() {
+        restrictions!(
+            "{}^{}|method^get|method=getinfo&time=0011|time=1234&id=12345",
+            "method",
+            "hello"
+        );
     }
 
     #[test]
