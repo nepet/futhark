@@ -883,13 +883,14 @@ pub fn add_padding(length: usize, buf: &mut Vec<u8>) {
 }
 
 #[allow(unused_macros)]
+#[macro_export]
 macro_rules! restrictions {
     () => {
         vec![]
     };
     ($s:expr) => {
         $s.split('&')
-            .map(|r| Restriction::try_from(r).unwrap())
+            .map(|r| <Restriction as ::std::convert::TryFrom<_>>::try_from(r).unwrap())
             .collect::<Vec<Restriction>>()
     };
     ($($arg:tt)+) => {
@@ -898,7 +899,7 @@ macro_rules! restrictions {
 }
 
 #[allow(unused_imports)]
-pub(crate) use restrictions;
+// pub(crate) use restrictions;
 
 // Here comes the tests!
 #[cfg(test)]
@@ -921,7 +922,7 @@ mod tests {
 
     #[test]
     fn test_restrictions_macro() {
-        restrictions!(
+        let _ = restrictions!(
             "{}^{}|method^get|method=getinfo&time=0011|time=1234&id=12345",
             "method",
             "hello"
