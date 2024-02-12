@@ -897,6 +897,9 @@ macro_rules! restrictions {
     };
 }
 
+#[allow(unused_imports)]
+pub(crate) use restrictions;
+
 // Here comes the tests!
 #[cfg(test)]
 mod tests {

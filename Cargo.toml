@@ -1,6 +1,6 @@
 [package]
 name = "runeauth"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
 license = "MIT"
